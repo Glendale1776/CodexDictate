@@ -1,0 +1,12 @@
+.DS_Store
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.m4a
+*.ipa
+*.dSYM.zip
+*.app.dSYM/
+.env
+.env.*
+OpenAI API Key*.txt
