@@ -12,6 +12,7 @@ final class DictationController: ObservableObject {
     @Published private(set) var canRetryFailedRecording = false
     @Published private(set) var hasAPIKey = false
     @Published private(set) var hotKeyError: String?
+    @Published private(set) var diagnosticSessionCount = 0
 
     let settings: SettingsStore
     let permissions: PermissionService
@@ -23,6 +24,7 @@ final class DictationController: ObservableObject {
     private let transcription: TranscriptionServicing
     private let structuring: TranscriptStructuringServicing
     private let pasteService: PasteService
+    private let diagnostics: DiagnosticStore
     private let logger = Logger(subsystem: "com.personal.CodexDictate", category: "Dictation")
 
     private var machine = DictationStateMachine()
@@ -35,6 +37,7 @@ final class DictationController: ObservableObject {
     private var finishRequestedDuringStart: Bool?
     private var recordingPeakLevel: Float = 0
     private var submitAfterProcessing = false
+    private var currentDiagnosticSessionID: UUID?
 
     init(
         settings: SettingsStore,
@@ -45,7 +48,8 @@ final class DictationController: ObservableObject {
         targetService: TargetApplicationProviding,
         transcription: TranscriptionServicing,
         structuring: TranscriptStructuringServicing,
-        pasteService: PasteService
+        pasteService: PasteService,
+        diagnostics: DiagnosticStore = DiagnosticStore()
     ) {
         self.settings = settings
         self.permissions = permissions
@@ -56,6 +60,7 @@ final class DictationController: ObservableObject {
         self.transcription = transcription
         self.structuring = structuring
         self.pasteService = pasteService
+        self.diagnostics = diagnostics
 
         hotKey.onPressed = { [weak self] in self?.hotKeyPressed() }
         hotKey.onSubmitPressed = { [weak self] in self?.optionSubmitPressed() }
@@ -134,9 +139,23 @@ final class DictationController: ObservableObject {
         showCompletion("Copied raw transcript")
     }
 
+    func copyRecentDiagnostics() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let export = await diagnostics.exportJSON()
+            pasteService.copy(export)
+            if !isPipelineBusy { showCompletion("Copied recent diagnostics") }
+        }
+    }
+
     func retryLastFailedRecording() {
         guard let artifact = failedRecording, !isPipelineBusy else { return }
-        Task { await process(artifact) }
+        Task {
+            if let currentDiagnosticSessionID {
+                await diagnostics.resume(sessionID: currentDiagnosticSessionID)
+            }
+            await process(artifact)
+        }
     }
 
     private var isPipelineBusy: Bool {
@@ -156,6 +175,7 @@ final class DictationController: ObservableObject {
             return
         }
         guard state.phase == .recording else { return }
+        logger.info("Option stop-and-submit requested")
         requestFinishRecording(reachedLimit: false, submitAfterProcessing: true)
     }
 
@@ -216,6 +236,7 @@ final class DictationController: ObservableObject {
             self.failedRecording = nil
             canRetryFailedRecording = false
         }
+        currentDiagnosticSessionID = nil
         submitAfterProcessing = false
         recordingPeakLevel = 0
         guard let target = targetService.captureFrontmostTarget(at: Date()) else {
@@ -232,6 +253,23 @@ final class DictationController: ObservableObject {
             }
             capturedTarget = target
             recordingStartedAt = Date()
+            let context = DiagnosticSessionContext(
+                targetBundleIdentifier: target.bundleIdentifier,
+                targetApplicationName: target.applicationName,
+                targetProcessIdentifier: target.processIdentifier,
+                capturedWindow: target.capturedWindowReference,
+                capturedEditableElement: target.capturedEditableElementReference,
+                capturedCaret: target.focusedCaretFrame != nil,
+                capturedExactFocus: target.capturedWindowReference && target.capturedEditableElementReference,
+                automaticPaste: settings.automaticPaste,
+                restrictPasteToVSCode: settings.vscodeOnly,
+                formattingEnabled: settings.structureTranscript,
+                formattingMode: settings.structuringMode.rawValue,
+                microphoneGranted: permissions.microphoneStatus == .authorized,
+                accessibilityGranted: permissions.accessibilityGranted
+            )
+            currentDiagnosticSessionID = await diagnostics.beginSession(context: context)
+            diagnosticSessionCount = await diagnostics.sessionCount()
             try update(.recording, status: "Recording")
             startMetering()
             logger.info("Recording started")
@@ -254,6 +292,21 @@ final class DictationController: ObservableObject {
             let artifact = try audio.stop()
             recordingDuration = artifact.duration
             audioLevel = 0
+            let recordedByteCount = try? artifact.url.resourceValues(
+                forKeys: [.fileSizeKey]
+            ).fileSize
+            await recordDiagnostic(DiagnosticEvent(
+                name: .recordingMetrics,
+                stage: .recording,
+                outcome: .success,
+                durationMilliseconds: max(0, Int(artifact.duration * 1_000)),
+                byteCount: recordedByteCount,
+                submitRequested: submitAfterProcessing,
+                stopTrigger: reachedLimit
+                    ? .durationLimit
+                    : (submitAfterProcessing ? .optionSubmit : .controlOption),
+                reachedDurationLimit: artifact.reachedDurationLimit || reachedLimit
+            ))
             let decision = AudioRecordingPolicy.decision(
                 duration: artifact.duration,
                 reachedDurationLimit: artifact.reachedDurationLimit || reachedLimit
@@ -262,6 +315,7 @@ final class DictationController: ObservableObject {
                 audio.delete(artifact.url)
                 let status = decision == .rejectNoSpeech ? "No speech detected" : "Recording too short"
                 try update(.cancelled, status: status)
+                await diagnostics.finish(sessionID: currentDiagnosticSessionID, outcome: .cancelled)
                 scheduleIdleReset()
                 return
             }
@@ -273,6 +327,13 @@ final class DictationController: ObservableObject {
     }
 
     private func process(_ artifact: RecordingArtifact) async {
+        let sessionID = currentDiagnosticSessionID
+        await DiagnosticContext.$sessionID.withValue(sessionID) {
+            await processWithinDiagnosticContext(artifact)
+        }
+    }
+
+    private func processWithinDiagnosticContext(_ artifact: RecordingArtifact) async {
         do {
             if state.phase == .failed { try update(.transcribing, status: "Retrying transcription") }
             else { try update(.transcribing, status: "Transcribing") }
@@ -285,6 +346,13 @@ final class DictationController: ObservableObject {
                 apiKey: apiKey
             )
             lastRawTranscript = result.text
+            await recordDiagnostic(DiagnosticEvent(
+                name: .stageCompleted,
+                stage: .transcription,
+                outcome: .success,
+                characterCount: result.text.count,
+                itemCount: result.languages.count
+            ))
             audio.delete(artifact.url)
             failedRecording = nil
             canRetryFailedRecording = false
@@ -293,7 +361,7 @@ final class DictationController: ObservableObject {
             var usedRawFallback = false
             if settings.structureTranscript {
                 try update(.structuring, status: "Structuring")
-                let structured: Result<String, Error>
+                let structured: Result<TranscriptStructuringResult, Error>
                 do {
                     structured = .success(try await structuring.structure(transcript: result.text, mode: settings.structuringMode, apiKey: apiKey))
                 } catch {
@@ -303,13 +371,20 @@ final class DictationController: ObservableObject {
                 finalText = outcome.text
                 usedRawFallback = outcome.usedRaw
             }
+            await recordDiagnostic(DiagnosticEvent(
+                name: .stageCompleted,
+                stage: .generation,
+                outcome: usedRawFallback ? .fallback : .success,
+                characterCount: finalText.count
+            ))
             lastProcessedResult = finalText
             try update(.inserting, status: "Inserting")
             let shouldSubmit = submitAfterProcessing
             submitAfterProcessing = false
-            let status = await insertOrCopy(finalText, submitAfterPaste: shouldSubmit)
-            let completion = usedRawFallback ? "\(status) — Raw transcript used" : status
+            let insertion = await insertOrCopy(finalText, submitAfterPaste: shouldSubmit)
+            let completion = usedRawFallback ? "\(insertion.status) — Raw transcript used" : insertion.status
             try update(.completed, status: completion)
+            await diagnostics.finish(sessionID: currentDiagnosticSessionID, outcome: insertion.outcome)
             scheduleIdleReset()
             logger.info("Dictation completed")
         } catch {
@@ -319,6 +394,7 @@ final class DictationController: ObservableObject {
                 canRetryFailedRecording = false
                 submitAfterProcessing = false
                 try? update(.cancelled, status: "No speech detected")
+                await diagnostics.finish(sessionID: currentDiagnosticSessionID, outcome: .cancelled)
                 scheduleIdleReset()
                 return
             }
@@ -331,41 +407,194 @@ final class DictationController: ObservableObject {
         }
     }
 
-    private func insertOrCopy(_ text: String, submitAfterPaste: Bool) async -> String {
+    private struct InsertionResult {
+        let status: String
+        let outcome: DiagnosticOutcome
+    }
+
+    private func insertOrCopy(_ text: String, submitAfterPaste: Bool) async -> InsertionResult {
         permissions.refresh()
-        guard let capturedTarget else {
+        guard let intendedTarget = capturedTarget else {
             pasteService.copy(text)
-            return CopyReason.targetChanged.status
+            await recordDiagnostic(DiagnosticEvent(
+                name: .insertionDecision,
+                stage: .insertion,
+                outcome: .targetChanged,
+                submitRequested: submitAfterPaste
+            ))
+            await recordDiagnostic(DiagnosticEvent(
+                name: .clipboardWrite,
+                stage: .insertion,
+                outcome: .success,
+                characterCount: text.count
+            ))
+            logger.notice("Insertion copied because no intended target was available")
+            return InsertionResult(status: CopyReason.targetChanged.status, outcome: .copy)
         }
-        let disposition = TargetSafety.disposition(
-            original: capturedTarget,
-            current: targetService.currentFrontmostTarget(),
+        var currentTarget = targetService.currentFrontmostTarget()
+        var disposition = TargetSafety.disposition(
+            original: intendedTarget,
+            current: currentTarget,
             finalText: text,
             automaticPaste: settings.automaticPaste,
             vscodeOnly: settings.vscodeOnly,
             accessibilityGranted: permissions.accessibilityGranted
         )
+        await recordDiagnostic(DiagnosticEvent(
+            name: .targetCheck,
+            stage: .insertion,
+            outcome: diagnosticOutcome(for: disposition),
+            activeBundleIdentifier: currentTarget?.bundleIdentifier,
+            submitRequested: submitAfterPaste
+        ))
+
+        // The application identity is not enough when several VS Code/Codex windows
+        // exist. Both shortcut workflows target the exact window and editor captured
+        // for delivery; only Option-submit is allowed to generate Return afterward.
+        if TargetRecoveryPolicy.shouldRestoreExactTarget(disposition: disposition),
+           !targetService.isFocused(intendedTarget) {
+            logger.info("Restoring the exact captured window for automatic paste")
+            let restored = await restoreFocus(to: intendedTarget)
+            await recordDiagnostic(DiagnosticEvent(
+                name: .focusRestoration,
+                stage: .insertion,
+                outcome: restored ? .success : .failure,
+                activeBundleIdentifier: targetService.currentFrontmostTarget()?.bundleIdentifier
+            ))
+            currentTarget = targetService.currentFrontmostTarget()
+            disposition = TargetSafety.disposition(
+                original: intendedTarget,
+                current: currentTarget,
+                finalText: text,
+                automaticPaste: settings.automaticPaste,
+                vscodeOnly: settings.vscodeOnly,
+                accessibilityGranted: permissions.accessibilityGranted
+            )
+        }
+
+        // Chromium/Electron can briefly report a helper or no frontmost process while
+        // its editor is committing focus. Give it a bounded chance to settle before
+        // falling back to the clipboard.
+        if disposition == .copy(.targetChanged) {
+            for delay in [150_000_000, 350_000_000] as [UInt64] {
+                try? await Task<Never, Never>.sleep(nanoseconds: delay)
+                currentTarget = targetService.currentFrontmostTarget()
+                disposition = TargetSafety.disposition(
+                    original: intendedTarget,
+                    current: currentTarget,
+                    finalText: text,
+                    automaticPaste: settings.automaticPaste,
+                    vscodeOnly: settings.vscodeOnly,
+                    accessibilityGranted: permissions.accessibilityGranted
+                )
+                if disposition != .copy(.targetChanged) { break }
+            }
+        }
+
+        if disposition == .paste, !targetService.isFocused(intendedTarget) {
+            // Application-level validation must never permit Command-V into a
+            // different VS Code window when exact-window restoration did not succeed.
+            disposition = .copy(.targetChanged)
+        }
         switch disposition {
         case .copy(let reason):
             pasteService.copy(text)
-            return reason.status
+            await recordDiagnostic(DiagnosticEvent(
+                name: .insertionDecision,
+                stage: .insertion,
+                outcome: diagnosticOutcome(for: reason),
+                characterCount: text.count,
+                activeBundleIdentifier: currentTarget?.bundleIdentifier,
+                submitRequested: submitAfterPaste
+            ))
+            await recordDiagnostic(DiagnosticEvent(
+                name: .clipboardWrite,
+                stage: .insertion,
+                outcome: .success,
+                characterCount: text.count
+            ))
+            logger.notice("Insertion copied instead of pasted: \(reason.status, privacy: .public)")
+            return InsertionResult(status: reason.status, outcome: .copy)
         case .paste:
             do {
                 try pasteService.paste(text)
+                await recordDiagnostic(DiagnosticEvent(
+                    name: .clipboardWrite,
+                    stage: .insertion,
+                    outcome: .success,
+                    characterCount: text.count
+                ))
+                await recordDiagnostic(DiagnosticEvent(
+                    name: .commandV,
+                    stage: .insertion,
+                    outcome: .posted,
+                    submitRequested: submitAfterPaste
+                ))
                 if submitAfterPaste {
                     do {
-                        try await pasteService.submitAfterPaste()
-                        return "Pasted and submitted"
+                        logger.info("Waiting for pasted text to settle before Return")
+                        try await pasteService.submitAfterPaste { [weak self] in
+                            guard let self,
+                                  await self.restoreFocus(to: intendedTarget) else {
+                                throw DictationFailure.targetChanged
+                            }
+                        }
+                        await recordDiagnostic(DiagnosticEvent(name: .returnKey, stage: .submission, outcome: .posted))
+                        logger.info("Return generated for Option stop-and-submit")
+                        return InsertionResult(status: "Pasted and submitted", outcome: .submitted)
                     } catch {
-                        return "Pasted — submit unavailable"
+                        await recordDiagnostic(DiagnosticEvent(
+                            name: .returnKey,
+                            stage: .submission,
+                            outcome: .submitUnavailable,
+                            errorCode: DiagnosticErrorSanitizer.code(for: error)
+                        ))
+                        logger.error("Return generation failed after paste")
+                        return InsertionResult(status: "Pasted — submit unavailable", outcome: .submitUnavailable)
                     }
                 }
-                return "Pasted"
+                await recordDiagnostic(DiagnosticEvent(
+                    name: .insertionDecision,
+                    stage: .insertion,
+                    outcome: .paste,
+                    submitRequested: false
+                ))
+                return InsertionResult(status: "Pasted", outcome: .paste)
             } catch {
                 pasteService.copy(text)
-                return "Copied — paste unavailable"
+                await recordDiagnostic(DiagnosticEvent(
+                    name: .commandV,
+                    stage: .insertion,
+                    outcome: .pasteUnavailable,
+                    errorCode: DiagnosticErrorSanitizer.code(for: error),
+                    submitRequested: submitAfterPaste
+                ))
+                await recordDiagnostic(DiagnosticEvent(
+                    name: .clipboardWrite,
+                    stage: .insertion,
+                    outcome: .success,
+                    characterCount: text.count
+                ))
+                logger.error("Command-V generation failed; result copied")
+                return InsertionResult(status: "Copied — paste unavailable", outcome: .pasteUnavailable)
             }
         }
+    }
+
+    private func restoreFocus(to target: CapturedTarget) async -> Bool {
+        if targetService.isFocused(target) { return true }
+        guard targetService.activate(target) else { return false }
+        for _ in 0..<12 {
+            try? await Task<Never, Never>.sleep(nanoseconds: 150_000_000)
+            if targetService.isFocused(target) {
+                // A Space/window activation can report focused just before its
+                // Electron editor is ready to consume synthesized keyboard events.
+                // Require the exact editor to remain focused for one more interval.
+                try? await Task<Never, Never>.sleep(nanoseconds: 150_000_000)
+                if targetService.isFocused(target) { return true }
+            }
+        }
+        return false
     }
 
     private func startMetering() {
@@ -391,8 +620,18 @@ final class DictationController: ObservableObject {
     }
 
     private func update(_ phase: DictationPhase, status: String, detail: String? = nil) throws {
+        switch phase {
+        case .recording, .finalizingAudio, .transcribing, .structuring, .inserting:
+            resetTask?.cancel()
+            resetTask = nil
+        default:
+            break
+        }
         try machine.transition(to: phase, status: status, detail: detail)
         state = machine.state
+        let event = DiagnosticEvent(name: .phaseChanged, phase: phase.rawValue)
+        let sessionID = currentDiagnosticSessionID
+        Task { await diagnostics.record(event, sessionID: sessionID) }
     }
 
     private func fail(_ error: Error, keepFailedState: Bool = false) {
@@ -409,10 +648,25 @@ final class DictationController: ObservableObject {
             state = machine.state
         }
         logger.error("Dictation pipeline failed")
-        if !keepFailedState { scheduleIdleReset() }
+        let sessionID = currentDiagnosticSessionID
+        let diagnosticErrorCode = DiagnosticErrorSanitizer.code(for: error)
+        Task {
+            await diagnostics.record(DiagnosticEvent(
+                name: .stageFailed,
+                outcome: .failure,
+                phase: DictationPhase.failed.rawValue,
+                errorCode: diagnosticErrorCode
+            ), sessionID: sessionID)
+            await diagnostics.finish(sessionID: sessionID, outcome: .failure)
+        }
+        // A retained artifact remains retryable independently of the visible state.
+        // Never leave the orange processing/failure indicator on screen indefinitely.
+        scheduleIdleReset(delayNanoseconds: keepFailedState ? 2_500_000_000 : 1_500_000_000)
     }
 
     private func resetToIdleIfNeeded() {
+        resetTask?.cancel()
+        resetTask = nil
         guard state.phase != .idle else { return }
         machine.reset()
         state = machine.state
@@ -432,13 +686,33 @@ final class DictationController: ObservableObject {
         scheduleIdleReset()
     }
 
-    private func scheduleIdleReset() {
+    private func scheduleIdleReset(delayNanoseconds: UInt64 = 1_500_000_000) {
         resetTask?.cancel()
         resetTask = Task { @MainActor [weak self] in
-            try? await Task<Never, Never>.sleep(nanoseconds: 1_500_000_000)
+            try? await Task<Never, Never>.sleep(nanoseconds: delayNanoseconds)
             guard !Task.isCancelled else { return }
             self?.machine.reset()
             if let self { self.state = self.machine.state }
+        }
+    }
+
+    private func recordDiagnostic(_ event: DiagnosticEvent) async {
+        await diagnostics.record(event, sessionID: currentDiagnosticSessionID)
+    }
+
+    private func diagnosticOutcome(for disposition: PasteDisposition) -> DiagnosticOutcome {
+        switch disposition {
+        case .paste: .paste
+        case .copy(let reason): diagnosticOutcome(for: reason)
+        }
+    }
+
+    private func diagnosticOutcome(for reason: CopyReason) -> DiagnosticOutcome {
+        switch reason {
+        case .automaticPasteDisabled: .automaticPasteDisabled
+        case .targetChanged: .targetChanged
+        case .targetNotAllowed: .targetNotAllowed
+        case .accessibilityRequired: .accessibilityRequired
         }
     }
 }

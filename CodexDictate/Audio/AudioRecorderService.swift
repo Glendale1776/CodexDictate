@@ -34,8 +34,8 @@ enum AudioRecorderError: LocalizedError, Equatable {
 @MainActor
 final class AudioRecorderService: NSObject, AudioRecorderServicing, @preconcurrency AVAudioRecorderDelegate {
     nonisolated static let minimumDuration: TimeInterval = 0.25
-    // Keep structured Codex prompts within the configured 4,096-token output
-    // budget under conservative multilingual and technical-text assumptions.
+    // Bound recording and upload time. Prompt generation separately uses dynamic
+    // output budgets and fidelity-preserving chunking rather than a 4,096-token cap.
     nonisolated static let maximumDuration: TimeInterval = 8 * 60
     nonisolated static let maximumUploadBytes = 25 * 1024 * 1024
 

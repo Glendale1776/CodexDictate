@@ -39,6 +39,17 @@ final class PasteServiceTests: XCTestCase {
         XCTAssertEqual(events.returnCount, 0)
     }
 
+    func testSuccessfulPasteKeepsDictatedResultAvailableOnClipboard() async throws {
+        let board = FakePasteboard()
+        let service = PasteService(pasteboard: board, events: FakePasteEvents())
+
+        try service.paste("Recoverable dictated result")
+        try await Task<Never, Never>.sleep(nanoseconds: 2_100_000_000)
+
+        XCTAssertEqual(board.currentText, "Recoverable dictated result")
+        XCTAssertTrue(board.restoredSnapshots.isEmpty)
+    }
+
     func testSubmitAfterPasteGeneratesReturn() async throws {
         let board = FakePasteboard()
         let events = FakePasteEvents()
@@ -54,12 +65,50 @@ final class PasteServiceTests: XCTestCase {
         XCTAssertEqual(events.commandVCount, 1)
         XCTAssertEqual(events.returnCount, 1)
     }
+
+    func testSubmitPreparesTargetImmediatelyBeforeReturn() async throws {
+        let events = FakePasteEvents()
+        let service = PasteService(
+            pasteboard: FakePasteboard(),
+            events: events,
+            submitDelayNanoseconds: 0
+        )
+        var prepared = false
+
+        try await service.submitAfterPaste {
+            XCTAssertEqual(events.returnCount, 0)
+            prepared = true
+        }
+
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(events.returnCount, 1)
+    }
+
+    func testFailedTargetPreparationPreventsReturn() async {
+        let events = FakePasteEvents()
+        let service = PasteService(
+            pasteboard: FakePasteboard(),
+            events: events,
+            submitDelayNanoseconds: 0
+        )
+
+        do {
+            try await service.submitAfterPaste {
+                throw DictationFailure.targetChanged
+            }
+            XCTFail("Expected target preparation to fail")
+        } catch {
+            XCTAssertEqual(error as? DictationFailure, .targetChanged)
+        }
+
+        XCTAssertEqual(events.returnCount, 0)
+    }
 }
 
 @MainActor
 private final class FakePasteboard: PasteboardAccessing {
     private(set) var changeCount = 10
-    private var currentText = "Original"
+    private(set) var currentText = "Original"
     private(set) var restoredSnapshots: [PasteboardSnapshot] = []
 
     func snapshot() -> PasteboardSnapshot {

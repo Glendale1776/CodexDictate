@@ -23,7 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings = SettingsStore()
         permissions = PermissionService()
         launchAtLogin = LaunchAtLoginService()
-        let client = OpenAIClient()
+        let diagnostics = DiagnosticStore()
+        let client = OpenAIClient(diagnostics: diagnostics)
         controller = DictationController(
             settings: settings,
             permissions: permissions,
@@ -32,8 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             audio: AudioRecorderService(),
             targetService: TargetApplicationService(),
             transcription: TranscriptionService(client: client),
-            structuring: TranscriptStructuringService(client: client),
-            pasteService: PasteService()
+            structuring: TranscriptStructuringService(client: client, diagnostics: diagnostics),
+            pasteService: PasteService(),
+            diagnostics: diagnostics
         )
         controller.start()
         hudController = HUDController(controller: controller)
@@ -100,6 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         retry.target = self
         retry.isEnabled = controller.canRetryFailedRecording
         menu.addItem(retry)
+
+        let diagnostics = NSMenuItem(
+            title: "Copy Recent Diagnostics (\(controller.diagnosticSessionCount))",
+            action: #selector(copyRecentDiagnostics),
+            keyEquivalent: ""
+        )
+        diagnostics.target = self
+        diagnostics.isEnabled = controller.diagnosticSessionCount > 0
+        menu.addItem(diagnostics)
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
@@ -134,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func copyLastProcessed() { controller.copyLastProcessed() }
     @objc private func copyLastRaw() { controller.copyLastRaw() }
     @objc private func retryLast() { controller.retryLastFailedRecording() }
+    @objc private func copyRecentDiagnostics() { controller.copyRecentDiagnostics() }
 
     @objc private func toggleLaunchAtLogin() {
         launchAtLogin.setEnabled(!launchAtLogin.isEnabled)

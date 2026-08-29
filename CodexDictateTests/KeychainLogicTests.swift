@@ -100,6 +100,8 @@ private final class ControllerAudio: AudioRecorderServicing {
 private final class ControllerTarget: TargetApplicationProviding {
     func captureFrontmostTarget(at date: Date) -> CapturedTarget? { nil }
     func currentFrontmostTarget() -> CapturedTarget? { nil }
+    func activate(_ target: CapturedTarget) -> Bool { false }
+    func isFocused(_ target: CapturedTarget) -> Bool { false }
 }
 
 private struct ControllerTranscription: TranscriptionServicing {
@@ -109,7 +111,7 @@ private struct ControllerTranscription: TranscriptionServicing {
 }
 
 private struct ControllerStructuring: TranscriptStructuringServicing {
-    func structure(transcript: String, mode: StructuringMode, apiKey: String) async throws -> String {
+    func structure(transcript: String, mode: StructuringMode, apiKey: String) async throws -> TranscriptStructuringResult {
         throw OpenAIError.networkUnavailable
     }
 }

@@ -4,7 +4,15 @@ struct OpenAIConfiguration: Sendable {
     var baseURL = URL(string: "https://api.openai.com")!
     var transcriptionModel = "gpt-transcribe"
     var structuringModel = "gpt-5.6-terra"
-    var maximumOutputTokens = 4096
+    var minimumStructuredOutputTokens = 8_192
+    var maximumStructuredOutputTokens = 32_768
+
+    func structuredOutputTokenBudget(inputByteCount: Int) -> Int {
+        min(
+            maximumStructuredOutputTokens,
+            max(minimumStructuredOutputTokens, (inputByteCount / 2) + 4_096)
+        )
+    }
 }
 
 struct TranscriptionResult: Equatable, Sendable {
@@ -22,6 +30,10 @@ struct TranscriptionResponse: Decodable, Equatable, Sendable {
 }
 
 struct ResponsesAPIResponse: Decodable, Equatable, Sendable {
+    struct IncompleteDetails: Decodable, Equatable, Sendable {
+        let reason: String?
+    }
+
     struct OutputItem: Decodable, Equatable, Sendable {
         struct ContentItem: Decodable, Equatable, Sendable {
             let type: String
@@ -32,9 +44,19 @@ struct ResponsesAPIResponse: Decodable, Equatable, Sendable {
         let content: [ContentItem]?
     }
 
+    let status: String?
+    let incompleteDetails: IncompleteDetails?
     let output: [OutputItem]
 
+    enum CodingKeys: String, CodingKey {
+        case status, output
+        case incompleteDetails = "incomplete_details"
+    }
+
     func extractedOutputText() throws -> String {
+        if status.map({ $0 != "completed" }) == true || incompleteDetails != nil {
+            throw FidelityPipelineError.incompleteModelResponse
+        }
         let pieces = output.flatMap { $0.content ?? [] }
             .filter { $0.type == "output_text" }
             .compactMap(\.text)
@@ -94,13 +116,18 @@ enum TranscriptionFailurePolicy {
 }
 
 enum StructuringFallback {
-    static func result(rawTranscript: String, structuredResult: Result<String, Error>) -> (text: String, usedRaw: Bool) {
+    static func result(
+        rawTranscript: String,
+        structuredResult: Result<TranscriptStructuringResult, Error>
+    ) -> (text: String, usedRaw: Bool) {
         switch structuredResult {
-        case .success(let text):
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? (rawTranscript, true) : (trimmed, false)
+        case .success(let result):
+            let trimmed = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty
+                ? (FidelityFallback.prompt(rawTranscript: rawTranscript), true)
+                : (trimmed, result.usedRawFallback)
         case .failure:
-            return (rawTranscript, true)
+            return (FidelityFallback.prompt(rawTranscript: rawTranscript), true)
         }
     }
 }

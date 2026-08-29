@@ -120,12 +120,24 @@ struct SettingsView: View {
                 set: { launchAtLogin.setEnabled($0) }
             ))
             if let error = launchAtLogin.lastError { Text(error).foregroundStyle(.red).font(.caption) }
+            Section("Diagnostics") {
+                HStack {
+                    Button("Copy Recent Diagnostics") { controller.copyRecentDiagnostics() }
+                        .disabled(controller.diagnosticSessionCount == 0)
+                    Spacer()
+                    Text("\(controller.diagnosticSessionCount) of 5 sessions")
+                        .foregroundStyle(.secondary)
+                }
+                Text("Copies a local, memory-only timeline of recording, API stages, target restoration, paste, and submit outcomes. It excludes audio, transcripts, prompt text, clipboard text, window titles, and credentials.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Privacy") {
-                Text("Audio is kept only in a temporary file while transcription or retry is possible. Raw and processed text remain in memory only. Clipboard contents are restored only when unchanged after paste.")
-                Text("CodexDictate sends audio and transcripts directly to OpenAI and includes no analytics or telemetry.")
+                Text("Audio is kept only in a temporary file while transcription or retry is possible. Raw and processed text remain in memory only. The latest result remains on the clipboard after insertion so a missed synthetic paste can be recovered with Command+V.")
+                Text("CodexDictate sends audio and transcripts directly to OpenAI. Diagnostics stay on this Mac in memory and are never telemetry or remotely collected analytics.")
             }
             Section("Safety") {
-                Text("Automatic insertion uses only Command+V. CodexDictate never generates Enter, Return, or a submit command.")
+                Text("Automatic insertion uses Command+V. Return is generated only after Option-alone stop-and-submit, never by the Control+Option workflow.")
             }
         }
         .formStyle(.grouped)

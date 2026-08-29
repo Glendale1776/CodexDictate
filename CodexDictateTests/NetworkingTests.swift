@@ -57,34 +57,131 @@ final class NetworkingTests: XCTestCase {
         }
     }
 
-    func testStructuringFallbackPreservesSuccessfulTranscript() {
-        let failed = StructuringFallback.result(rawTranscript: "Raw details", structuredResult: .failure(OpenAIError.server(status: 500)))
-        XCTAssertEqual(failed.text, "Raw details")
-        XCTAssertTrue(failed.usedRaw)
-
-        let succeeded = StructuringFallback.result(rawTranscript: "Raw", structuredResult: .success("  Cleaned  "))
-        XCTAssertEqual(succeeded.text, "Cleaned")
-        XCTAssertFalse(succeeded.usedRaw)
+    func testResponsesAPIRejectsAnyNonCompletedStatus() throws {
+        let fixture = Data(#"{"status":"failed","output":[{"type":"message","content":[{"type":"output_text","text":"partial"}]}]}"#.utf8)
+        let response = try JSONDecoder().decode(ResponsesAPIResponse.self, from: fixture)
+        XCTAssertThrowsError(try response.extractedOutputText()) { error in
+            XCTAssertEqual(error as? FidelityPipelineError, .incompleteModelResponse)
+        }
     }
 
-    func testCodexPromptInstructionsUseAdaptiveSectionsWithoutInventingContent() {
-        let instructions = StructuringInstructions.text(for: .structured)
+    func testStructuringFallbackPreservesSuccessfulTranscript() {
+        let failedResult: Result<TranscriptStructuringResult, Error> = .failure(OpenAIError.server(status: 500))
+        let failed = StructuringFallback.result(rawTranscript: "Raw details", structuredResult: failedResult)
+        XCTAssertEqual(failed.text, "DICTATED REQUEST:\n\nRaw details")
+        XCTAssertTrue(failed.usedRaw)
 
-        XCTAssertTrue(instructions.contains("Always include a TASK: section"))
-        XCTAssertTrue(instructions.contains("Add CONTEXT: before TASK: only when"))
-        XCTAssertTrue(instructions.contains("REQUIREMENTS:"))
-        XCTAssertTrue(instructions.contains("CONSTRAINTS:"))
-        XCTAssertTrue(instructions.contains("ACCEPTANCE CRITERIA:"))
-        XCTAssertTrue(instructions.contains("Never create an empty section, invent missing content"))
-        XCTAssertTrue(instructions.contains("A short direct request should remain short"))
+        let succeeded = StructuringFallback.result(
+            rawTranscript: "Raw",
+            structuredResult: .success(.init(text: "  Cleaned  ", usedRawFallback: false))
+        )
+        XCTAssertEqual(succeeded.text, "Cleaned")
+        XCTAssertFalse(succeeded.usedRaw)
+
+        let pipelineFallback = StructuringFallback.result(
+            rawTranscript: "Raw",
+            structuredResult: .success(.init(text: "DICTATED REQUEST:\n\nRaw", usedRawFallback: true))
+        )
+        XCTAssertTrue(pipelineFallback.usedRaw)
+    }
+
+    func testCodexPromptInstructionsAreFidelityFirstAndAdaptive() {
+        let instructions = FidelityInstructions.generator(mode: .structured)
+
+        XCTAssertTrue(instructions.contains("Semantic fidelity is more important than brevity"))
+        XCTAssertTrue(instructions.contains("secondary requirement"))
+        XCTAssertTrue(instructions.contains("Always include TASK"))
+        XCTAssertTrue(instructions.contains("CURRENT BEHAVIOR"))
+        XCTAssertTrue(instructions.contains("REQUIREMENTS"))
+        XCTAssertTrue(instructions.contains("CONSTRAINTS"))
+        XCTAssertTrue(instructions.contains("NON-GOALS"))
+        XCTAssertTrue(instructions.contains("ACCEPTANCE CRITERIA"))
+        XCTAssertTrue(instructions.contains("OPEN QUESTIONS"))
+        XCTAssertTrue(instructions.contains("Never emit empty sections"))
+        XCTAssertTrue(instructions.contains("Do not invent features"))
     }
 
     func testCleanTranscriptInstructionsDoNotForceCodexSections() {
-        let instructions = StructuringInstructions.text(for: .clean)
+        let instructions = FidelityInstructions.generator(mode: .clean)
 
-        XCTAssertTrue(instructions.contains("preserve the transcript's natural paragraph structure"))
+        XCTAssertTrue(instructions.contains("Preserve natural paragraph structure"))
         XCTAssertFalse(instructions.contains("Always include a TASK: section"))
-        XCTAssertFalse(instructions.contains("Add CONTEXT: before TASK:"))
+        XCTAssertFalse(instructions.contains("preferably in this order: CONTEXT"))
+    }
+
+    func testStructuredResponseUsesStrictSchemaTerraAndDynamicBudget() async throws {
+        let output = #"{"normalized_transcript":"Preserve every detail."}"#
+        let transport = QueueTransport(stubs: [
+            .init(status: 200, data: structuredResponseData(json: output))
+        ])
+        let client = OpenAIClient(transport: transport, sleeper: { _ in })
+
+        let response: NormalizedTranscriptResponse = try await client.structuredResponse(
+            stage: .normalization,
+            instructions: "Normalize faithfully",
+            input: String(repeating: "x", count: 10_000),
+            schema: FidelityJSONSchemas.normalization,
+            apiKey: "test-key"
+        )
+
+        XCTAssertEqual(response.normalizedTranscript, "Preserve every detail.")
+        let capturedRequest = await transport.lastRequest
+        let request = try XCTUnwrap(capturedRequest)
+        XCTAssertEqual(request.url?.path, "/v1/responses")
+        let body = try XCTUnwrap(request.httpBody)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(json["model"] as? String, "gpt-5.6-terra")
+        XCTAssertEqual((json["reasoning"] as? [String: Any])?["effort"] as? String, "low")
+        XCTAssertEqual(json["max_output_tokens"] as? Int, 9_096)
+        let format = ((json["text"] as? [String: Any])?["format"] as? [String: Any])
+        XCTAssertEqual(format?["type"] as? String, "json_schema")
+        XCTAssertEqual(format?["strict"] as? Bool, true)
+        XCTAssertEqual(format?["name"] as? String, "codex_dictate_normalization")
+        XCTAssertNotNil(format?["schema"] as? [String: Any])
+    }
+
+    func testStructuredResponseRetriesIncompleteResponseExactlyOnce() async throws {
+        let transport = QueueTransport(stubs: [
+            .init(status: 200, data: incompleteStructuredResponseData()),
+            .init(status: 200, data: structuredResponseData(json: #"{"final_prompt":"TASK:\n\nKeep all details."}"#))
+        ])
+        let client = OpenAIClient(transport: transport, sleeper: { _ in })
+
+        let response: StructuredPromptResponse = try await client.structuredResponse(
+            stage: .generation,
+            instructions: "Generate faithfully",
+            input: "input",
+            schema: FidelityJSONSchemas.prompt,
+            apiKey: "test-key"
+        )
+
+        XCTAssertEqual(response.finalPrompt, "TASK:\n\nKeep all details.")
+        let count = await transport.requestCount
+        XCTAssertEqual(count, 2)
+    }
+
+    func testStructuredResponseRejectsRepeatedMalformedOutput() async throws {
+        let malformed = structuredResponseData(json: #"{"unexpected":"value"}"#)
+        let transport = QueueTransport(stubs: [
+            .init(status: 200, data: malformed),
+            .init(status: 200, data: malformed)
+        ])
+        let client = OpenAIClient(transport: transport, sleeper: { _ in })
+
+        do {
+            let _: StructuredPromptResponse = try await client.structuredResponse(
+                stage: .generation,
+                instructions: "Generate faithfully",
+                input: "input",
+                schema: FidelityJSONSchemas.prompt,
+                apiKey: "test-key"
+            )
+            XCTFail("Expected malformed structured data to fail")
+        } catch {
+            XCTAssertEqual(error as? FidelityPipelineError, .malformedModelResponse)
+        }
+        let count = await transport.requestCount
+        XCTAssertEqual(count, 2)
     }
 
     func testHTTPErrorMappingAndRetryPolicy() {
@@ -154,6 +251,53 @@ final class NetworkingTests: XCTestCase {
         XCTAssertEqual(requestCount, 1)
     }
 
+    func testClientRecordsSanitizedRequestTimelineWithoutContent() async throws {
+        let transport = QueueTransport(stubs: [
+            .init(status: 500, data: Data()),
+            .init(status: 200, data: Data(#"{"text":"Private dictated content","languages":[{"code":"en"}]}"#.utf8))
+        ])
+        let diagnostics = DiagnosticStore()
+        let sessionID = await diagnostics.beginSession(context: DiagnosticSessionContext(
+            targetBundleIdentifier: "com.microsoft.VSCode",
+            targetApplicationName: "Visual Studio Code",
+            targetProcessIdentifier: 42,
+            capturedWindow: true,
+            capturedEditableElement: true,
+            capturedCaret: false,
+            capturedExactFocus: true,
+            automaticPaste: true,
+            restrictPasteToVSCode: true,
+            formattingEnabled: false,
+            formattingMode: StructuringMode.clean.rawValue,
+            microphoneGranted: true,
+            accessibilityGranted: true
+        ))
+        let client = OpenAIClient(transport: transport, diagnostics: diagnostics, sleeper: { _ in })
+        let file = try temporaryAudioFile()
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        _ = try await DiagnosticContext.$sessionID.withValue(sessionID) {
+            try await client.transcribe(
+                audioURL: file,
+                prompt: "Private prompt context",
+                keywords: ["PrivateKeyword"],
+                languages: ["en"],
+                apiKey: "sk-secret-api-key"
+            )
+        }
+
+        let sessions = await diagnostics.snapshot()
+        let events = try XCTUnwrap(sessions.first?.events)
+        XCTAssertEqual(events.filter { $0.name == .httpResponse }.map(\.httpStatus), [500, 200])
+        XCTAssertEqual(events.filter { $0.name == .retryScheduled }.count, 1)
+        XCTAssertEqual(events.last { $0.name == .stageCompleted }?.characterCount, 24)
+        let export = await diagnostics.exportJSON()
+        XCTAssertFalse(export.contains("Private dictated content"))
+        XCTAssertFalse(export.contains("Private prompt context"))
+        XCTAssertFalse(export.contains("PrivateKeyword"))
+        XCTAssertFalse(export.contains("sk-secret-api-key"))
+    }
+
     private func response(status: Int) -> HTTPURLResponse {
         HTTPURLResponse(url: URL(string: "https://api.openai.com")!, statusCode: status, httpVersion: nil, headerFields: nil)!
     }
@@ -162,6 +306,24 @@ final class NetworkingTests: XCTestCase {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("m4a")
         try Data([0, 1, 2, 3]).write(to: url)
         return url
+    }
+
+    private func structuredResponseData(json: String) -> Data {
+        try! JSONSerialization.data(withJSONObject: [
+            "status": "completed",
+            "output": [[
+                "type": "message",
+                "content": [["type": "output_text", "text": json]]
+            ]]
+        ])
+    }
+
+    private func incompleteStructuredResponseData() -> Data {
+        try! JSONSerialization.data(withJSONObject: [
+            "status": "incomplete",
+            "incomplete_details": ["reason": "max_output_tokens"],
+            "output": []
+        ])
     }
 }
 

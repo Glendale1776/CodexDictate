@@ -1,6 +1,20 @@
 # CodexDictate
 
-CodexDictate is a personal native macOS 15+ menu-bar utility. Press **Control + Option** together, dictate a coding request, then press **Control + Option** again to stop and paste without submitting, or tap **Option** by itself to stop, paste, and submit with Return. It transcribes through the OpenAI API and optionally cleans or structures the result.
+CodexDictate is an open-source, native macOS 15+ menu-bar utility. Press **Control + Option** together, dictate a coding request, then press **Control + Option** again to stop and paste without submitting, or tap **Option** by itself to stop, paste, and submit with Return. It transcribes through the OpenAI API and can convert the transcript into a fidelity-checked Codex prompt.
+
+## Copy, fork, or clone
+
+Use GitHub's **Fork** button to copy the project into your own account, or clone it directly:
+
+```sh
+git clone https://github.com/Glendale1776/CodexDictate.git
+cd CodexDictate
+```
+
+The repository includes [`AGENTS.md`](AGENTS.md) for Codex and other compatible coding agents, [`CLAUDE.md`](CLAUDE.md) for Claude Code, and a detailed [`LLM_GUIDE.md`](docs/LLM_GUIDE.md). Give an agent access to the repository root so it can read those instructions before changing the application.
+
+> [!IMPORTANT]
+> No OpenAI API key is included in this repository. Every user must provide their own key in the app's Settings. CodexDictate saves it only in that user's macOS Keychain; `.env` files and common local key-file names are ignored by Git. Never commit a key, paste it into an issue, or share it with a coding agent.
 
 ## Build
 
@@ -17,6 +31,8 @@ To copy the Release application into `/Applications`, explicitly run:
 ```sh
 ./scripts/install-local.sh
 ```
+
+There is no preconfigured developer team and no shared signing certificate. A local build uses a signing identity already available on the builder's Mac when possible; otherwise it is ad-hoc signed.
 
 Local signing is intentionally automatic and no development team is hardcoded. If no identity is available, the build remains ad-hoc signed and prints a warning that Accessibility must be granted again after the app changes.
 
@@ -35,10 +51,14 @@ The first launch opens the same compact setup-oriented Settings window when a ke
 ## Settings and recovery
 
 - Click the shortcut field and press Control + Option together, or enter a key combination containing Option, Control, or Command. Shift by itself is rejected.
-- Choose Clean transcript or adaptive Codex prompt formatting, disable formatting, edit technical vocabulary, or provide expected language codes. Codex prompt formatting always identifies the task and adds only supported sections such as context, requirements, constraints, acceptance criteria, and references.
+- Choose Clean transcript or adaptive Codex prompt formatting, disable formatting, edit technical vocabulary, or provide expected language codes. Both formatting modes use the same fidelity pipeline: conservative normalization, an atomic semantic inventory, prompt generation, independent verification, deterministic protected-value checks, and at most two targeted repairs. Codex prompt formatting adds only sections supported by the dictation.
+- Paths, URLs, repository names, dates, product/platform names, quoted labels, code identifiers, versions, numbers, acronyms, negations, and strong modal terms are protected against silent loss or change. Long input is partitioned at safe text boundaries before inventories are merged.
+- If structured output is malformed, incomplete, empty, or still fails verification after two repairs, CodexDictate pastes `DICTATED REQUEST:` followed by the unchanged raw transcript instead of returning a polished but incomplete request. The completion status says **Raw transcript used**; internal inventories and verifier diagnostics never enter the clipboard result.
 - Automatic paste is VS Code-only by default. Enabling other applications is an explicit advanced choice.
 - The menu bar icon can be hidden from **Settings → Advanced**. Reopen CodexDictate from `/Applications` to show Settings again while the icon is hidden.
 - **Copy Last Result** and **Copy Last Raw Transcript** recover the latest in-memory result. Nothing is retained after quit.
+- **Copy Recent Diagnostics** copies a privacy-safe JSON timeline for the five most recent dictation sessions. It records phases, durations, bounded retries, HTTP status codes, formatting/verification outcomes, captured-target checks, focus restoration, clipboard writes, Command+V, and Option-submit Return posting. The buffer exists only in memory and excludes audio, file paths, API credentials, transcript/prompt/clipboard text, document contents, and window titles.
+- After any successful insertion attempt, the complete result remains on the clipboard. macOS does not acknowledge whether a Chromium/Electron field accepted a synthesized Command+V, so this guarantees that a missed automatic paste can still be recovered with Command+V.
 - Empty transcription responses are retried automatically once. A failed transcription with detected speech may be retried from the menu while its temporary recording remains available.
 - Launch at Login uses the system `SMAppService` registration.
 
@@ -46,4 +66,11 @@ The first launch opens the same compact setup-oriented Settings window when a ke
 
 Permissions are associated with both the bundle identifier `com.personal.CodexDictate` and the app's designated code requirement. If System Settings shows an enabled CodexDictate row while the app says Accessibility is required, reset the stale entry with `tccutil reset Accessibility com.personal.CodexDictate`, relaunch `/Applications/CodexDictate.app`, click **Request**, and enable the newly created row. During ad-hoc development, Microphone can likewise be reset with `tccutil reset Microphone com.personal.CodexDictate`.
 
-CodexDictate is intended for personal local use. Audio and text go directly from the Mac to OpenAI; there is no separate backend, transcript history, telemetry, or local Whisper installation.
+CodexDictate is intended for personal local use. Audio and text go directly from the Mac to OpenAI; there is no separate backend, transcript history, telemetry, remotely collected analytics, or local Whisper installation. The optional five-session diagnostic timeline is local, memory-only metadata.
+
+## Documentation and license
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) explains the major components and data flow.
+- [`docs/LLM_GUIDE.md`](docs/LLM_GUIDE.md) maps common questions and changes to the relevant source files.
+- [`docs/VALIDATION.md`](docs/VALIDATION.md) records automated and manual validation coverage.
+- [`LICENSE`](LICENSE) makes the source available under the MIT License.

@@ -40,12 +40,11 @@ final class PasteService {
     private let pasteboard: PasteboardAccessing
     private let events: PasteEventGenerating
     private let submitDelayNanoseconds: UInt64
-    private var restorationTask: Task<Void, Never>?
 
     init(
         pasteboard: PasteboardAccessing = SystemPasteboard(),
         events: PasteEventGenerating = CGPasteEventGenerator(),
-        submitDelayNanoseconds: UInt64 = 600_000_000
+        submitDelayNanoseconds: UInt64 = 1_250_000_000
     ) {
         self.pasteboard = pasteboard
         self.events = events
@@ -53,31 +52,30 @@ final class PasteService {
     }
 
     func copy(_ text: String) {
-        restorationTask?.cancel()
         _ = pasteboard.replaceWithText(text)
     }
 
     func paste(_ text: String) throws {
-        restorationTask?.cancel()
         let snapshot = pasteboard.snapshot()
-        let insertedChangeCount = pasteboard.replaceWithText(text)
+        _ = pasteboard.replaceWithText(text)
         do {
             try events.postCommandV()
         } catch {
             _ = pasteboard.restore(snapshot)
             throw error
         }
-        restorationTask = Task { @MainActor [weak self] in
-            // Keep the dictated text available long enough for a busy Electron
-            // renderer to handle Command-V before restoring the user's clipboard.
-            try? await Task<Never, Never>.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
-            _ = self?.restoreIfUnchanged(snapshot, insertedChangeCount: insertedChangeCount)
-        }
+        // Keep the result on the clipboard after posting Command-V. macOS does not
+        // acknowledge whether an Electron editor accepted the synthetic event; an
+        // automatic clipboard restore made a missed paste permanently unrecoverable.
+        // Retaining the result lets the user press Command-V manually and is also the
+        // safest fallback when focus changes during recognition.
     }
 
-    func submitAfterPaste() async throws {
+    func submitAfterPaste(
+        prepareForSubmit: (@MainActor () async throws -> Void)? = nil
+    ) async throws {
         try await Task<Never, Never>.sleep(nanoseconds: submitDelayNanoseconds)
+        try await prepareForSubmit?()
         try events.postReturn()
     }
 

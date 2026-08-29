@@ -25,23 +25,51 @@ final class URLSessionTransport: HTTPRequestTransport, @unchecked Sendable {
     }
 }
 
+private struct StructuredResponsesRequestBody: Encodable {
+    struct Reasoning: Encodable { let effort: String }
+    struct TextConfiguration: Encodable {
+        struct Format: Encodable {
+            let type = "json_schema"
+            let name: String
+            let strict = true
+            let schema: JSONSchemaValue
+        }
+        let format: Format
+    }
+
+    let model: String
+    let reasoning: Reasoning
+    let instructions: String
+    let input: String
+    let text: TextConfiguration
+    let maxOutputTokens: Int
+
+    enum CodingKeys: String, CodingKey {
+        case model, reasoning, instructions, input, text
+        case maxOutputTokens = "max_output_tokens"
+    }
+}
+
 actor OpenAIClient {
     typealias Sleeper = @Sendable (TimeInterval) async throws -> Void
 
     private let configuration: OpenAIConfiguration
     private let transport: HTTPRequestTransport
     private let sleeper: Sleeper
+    private let diagnostics: (any DiagnosticRecording)?
     private let logger = Logger(subsystem: "com.personal.CodexDictate", category: "OpenAI")
 
     init(
         configuration: OpenAIConfiguration = OpenAIConfiguration(),
         transport: HTTPRequestTransport = URLSessionTransport(),
+        diagnostics: (any DiagnosticRecording)? = nil,
         sleeper: @escaping Sleeper = { seconds in
             try await Task<Never, Never>.sleep(nanoseconds: UInt64(max(0, seconds) * 1_000_000_000))
         }
     ) {
         self.configuration = configuration
         self.transport = transport
+        self.diagnostics = diagnostics
         self.sleeper = sleeper
     }
 
@@ -52,99 +80,221 @@ actor OpenAIClient {
         languages: [String],
         apiKey: String
     ) async throws -> TranscriptionResult {
-        guard let audio = try? Data(contentsOf: audioURL), !audio.isEmpty,
-              audio.count < AudioRecorderService.maximumUploadBytes else {
-            throw OpenAIError.invalidFile
-        }
-        var form = MultipartFormData()
-        form.appendField(name: "model", value: configuration.transcriptionModel)
-        form.appendField(name: "prompt", value: prompt)
-        for keyword in keywords { form.appendField(name: "keywords[]", value: keyword) }
-        for language in languages { form.appendField(name: "languages[]", value: language) }
-        form.appendFile(name: "file", filename: "dictation.m4a", mimeType: "audio/mp4", contents: audio)
-        form.finalize()
+        let startedAt = Date()
+        await record(DiagnosticEvent(name: .stageStarted, stage: .transcription, outcome: .started))
+        do {
+            guard let audio = try? Data(contentsOf: audioURL), !audio.isEmpty,
+                  audio.count < AudioRecorderService.maximumUploadBytes else {
+                throw OpenAIError.invalidFile
+            }
+            var form = MultipartFormData()
+            form.appendField(name: "model", value: configuration.transcriptionModel)
+            form.appendField(name: "prompt", value: prompt)
+            for keyword in keywords { form.appendField(name: "keywords[]", value: keyword) }
+            for language in languages { form.appendField(name: "languages[]", value: language) }
+            form.appendFile(name: "file", filename: "dictation.m4a", mimeType: "audio/mp4", contents: audio)
+            form.finalize()
 
-        var request = URLRequest(url: endpoint("v1/audio/transcriptions"))
-        request.httpMethod = "POST"
-        request.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
-        request.httpBody = form.data
-        for attempt in 0...1 {
-            let data = try await perform(request, apiKey: apiKey)
-            guard let decoded = try? JSONDecoder().decode(TranscriptionResponse.self, from: data) else {
-                throw OpenAIError.invalidJSON
+            var request = URLRequest(url: endpoint("v1/audio/transcriptions"))
+            request.httpMethod = "POST"
+            request.setValue(form.contentType, forHTTPHeaderField: "Content-Type")
+            request.httpBody = form.data
+            for attempt in 0...1 {
+                let data = try await perform(request, apiKey: apiKey, stage: .transcription)
+                guard let decoded = try? JSONDecoder().decode(TranscriptionResponse.self, from: data) else {
+                    throw OpenAIError.invalidJSON
+                }
+                let text = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    let result = TranscriptionResult(text: text, languages: decoded.languages?.map(\.code) ?? [])
+                    await record(DiagnosticEvent(
+                        name: .stageCompleted,
+                        stage: .transcription,
+                        outcome: .success,
+                        durationMilliseconds: Self.milliseconds(since: startedAt),
+                        characterCount: text.count,
+                        itemCount: result.languages.count
+                    ))
+                    return result
+                }
+                if attempt == 0 {
+                    logger.notice("Empty transcription response; retrying once")
+                    await record(DiagnosticEvent(
+                        name: .retryScheduled,
+                        stage: .transcription,
+                        outcome: .retry,
+                        attempt: 2,
+                        errorCode: "openai.empty_transcript"
+                    ))
+                }
             }
-            let text = decoded.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                return TranscriptionResult(text: text, languages: decoded.languages?.map(\.code) ?? [])
-            }
-            if attempt == 0 {
-                logger.notice("Empty transcription response; retrying once")
-            }
+            throw OpenAIError.emptyTranscript
+        } catch {
+            await record(DiagnosticEvent(
+                name: .stageFailed,
+                stage: .transcription,
+                outcome: .failure,
+                durationMilliseconds: Self.milliseconds(since: startedAt),
+                errorCode: DiagnosticErrorSanitizer.code(for: error)
+            ))
+            throw error
         }
-        throw OpenAIError.emptyTranscript
     }
 
-    func structure(transcript: String, mode: StructuringMode, apiKey: String) async throws -> String {
-        struct RequestBody: Encodable {
-            struct Reasoning: Encodable { let effort: String }
-            let model: String
-            let reasoning: Reasoning
-            let instructions: String
-            let input: String
-            let maxOutputTokens: Int
-
-            enum CodingKeys: String, CodingKey {
-                case model, reasoning, instructions, input
-                case maxOutputTokens = "max_output_tokens"
-            }
-        }
-
-        let body = RequestBody(
+    func structuredResponse<T: Decodable & Sendable>(
+        stage: FidelityStage,
+        instructions: String,
+        input: String,
+        schema: JSONSchemaValue,
+        apiKey: String
+    ) async throws -> T {
+        let diagnosticStage = stage.diagnosticStage
+        let startedAt = Date()
+        await record(DiagnosticEvent(name: .stageStarted, stage: diagnosticStage, outcome: .started))
+        let body = StructuredResponsesRequestBody(
             model: configuration.structuringModel,
             reasoning: .init(effort: "low"),
-            instructions: StructuringInstructions.text(for: mode),
-            input: transcript,
-            maxOutputTokens: configuration.maximumOutputTokens
+            instructions: instructions,
+            input: input,
+            text: .init(format: .init(
+                name: "codex_dictate_\(stage.rawValue)",
+                schema: schema
+            )),
+            maxOutputTokens: configuration.structuredOutputTokenBudget(
+                inputByteCount: input.utf8.count
+            )
         )
         var request = URLRequest(url: endpoint("v1/responses"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(body)
-        let data = try await perform(request, apiKey: apiKey)
-        guard let decoded = try? JSONDecoder().decode(ResponsesAPIResponse.self, from: data) else {
-            throw OpenAIError.invalidJSON
+        do {
+            for responseAttempt in 0...1 {
+                let data = try await perform(request, apiKey: apiKey, stage: diagnosticStage)
+                do {
+                    let response = try JSONDecoder().decode(ResponsesAPIResponse.self, from: data)
+                    let output = try response.extractedOutputText()
+                    guard let decodedData = output.data(using: .utf8) else {
+                        throw FidelityPipelineError.malformedModelResponse
+                    }
+                    let decoded = try JSONDecoder().decode(T.self, from: decodedData)
+                    await record(DiagnosticEvent(
+                        name: .stageCompleted,
+                        stage: diagnosticStage,
+                        outcome: .success,
+                        durationMilliseconds: Self.milliseconds(since: startedAt),
+                        byteCount: decodedData.count
+                    ))
+                    return decoded
+                } catch let error as FidelityPipelineError {
+                    guard responseAttempt == 0 else { throw error }
+                    logger.notice("Retrying an incomplete structured response")
+                    await record(DiagnosticEvent(
+                        name: .retryScheduled,
+                        stage: diagnosticStage,
+                        outcome: .retry,
+                        attempt: 2,
+                        errorCode: DiagnosticErrorSanitizer.code(for: error)
+                    ))
+                } catch {
+                    guard responseAttempt == 0 else {
+                        throw FidelityPipelineError.malformedModelResponse
+                    }
+                    logger.notice("Retrying a malformed structured response")
+                    await record(DiagnosticEvent(
+                        name: .retryScheduled,
+                        stage: diagnosticStage,
+                        outcome: .retry,
+                        attempt: 2,
+                        errorCode: "fidelity.malformed_model_response"
+                    ))
+                }
+            }
+            throw FidelityPipelineError.malformedModelResponse
+        } catch {
+            await record(DiagnosticEvent(
+                name: .stageFailed,
+                stage: diagnosticStage,
+                outcome: .failure,
+                durationMilliseconds: Self.milliseconds(since: startedAt),
+                errorCode: DiagnosticErrorSanitizer.code(for: error)
+            ))
+            throw error
         }
-        return try decoded.extractedOutputText()
     }
 
     private func endpoint(_ path: String) -> URL {
         configuration.baseURL.appendingPathComponent(path)
     }
 
-    private func perform(_ unsignedRequest: URLRequest, apiKey: String) async throws -> Data {
+    private func perform(
+        _ unsignedRequest: URLRequest,
+        apiKey: String,
+        stage: DiagnosticStage
+    ) async throws -> Data {
         var request = unsignedRequest
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         for attempt in 0...1 {
+            let attemptStartedAt = Date()
             do {
                 let (data, response) = try await transport.data(for: request)
+                await record(DiagnosticEvent(
+                    name: .httpResponse,
+                    stage: stage,
+                    outcome: (200..<300).contains(response.statusCode) ? .success : .failure,
+                    durationMilliseconds: Self.milliseconds(since: attemptStartedAt),
+                    attempt: attempt + 1,
+                    httpStatus: response.statusCode,
+                    byteCount: data.count
+                ))
                 if (200..<300).contains(response.statusCode) { return data }
                 let error = Self.mapHTTPError(response)
                 guard RetryPolicy.shouldRetry(error: error, attempt: attempt) else { throw error }
                 let delay = min(Self.retryDelay(from: response) ?? 0.5, 10)
                 logger.notice("Retrying a transient OpenAI request")
+                await record(DiagnosticEvent(
+                    name: .retryScheduled,
+                    stage: stage,
+                    outcome: .retry,
+                    attempt: attempt + 2,
+                    httpStatus: response.statusCode,
+                    errorCode: DiagnosticErrorSanitizer.code(for: error)
+                ))
                 try await sleeper(delay)
             } catch let error as OpenAIError {
                 guard RetryPolicy.shouldRetry(error: error, attempt: attempt) else { throw error }
+                await record(DiagnosticEvent(
+                    name: .retryScheduled,
+                    stage: stage,
+                    outcome: .retry,
+                    attempt: attempt + 2,
+                    errorCode: DiagnosticErrorSanitizer.code(for: error)
+                ))
                 try await sleeper(0.5)
             } catch let error as URLError {
                 let mapped = Self.mapNetworkError(error)
                 guard RetryPolicy.shouldRetry(error: mapped, attempt: attempt) else { throw mapped }
+                await record(DiagnosticEvent(
+                    name: .retryScheduled,
+                    stage: stage,
+                    outcome: .retry,
+                    attempt: attempt + 2,
+                    errorCode: DiagnosticErrorSanitizer.code(for: mapped)
+                ))
                 try await sleeper(0.5)
             } catch {
                 throw OpenAIError.networkUnavailable
             }
         }
         throw OpenAIError.networkUnavailable
+    }
+
+    private func record(_ event: DiagnosticEvent) async {
+        await diagnostics?.record(event, sessionID: DiagnosticContext.sessionID)
+    }
+
+    private static func milliseconds(since date: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(date) * 1_000))
     }
 
     static func mapHTTPError(_ response: HTTPURLResponse) -> OpenAIError {

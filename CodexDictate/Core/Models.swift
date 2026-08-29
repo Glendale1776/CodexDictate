@@ -26,6 +26,9 @@ struct CapturedTarget: Equatable, Sendable {
     let windowFrame: CGRect?
     let focusedElementFrame: CGRect?
     let focusedCaretFrame: CGRect?
+    let focusSnapshotIdentifier: UUID?
+    let capturedWindowReference: Bool
+    let capturedEditableElementReference: Bool
 
     init(
         processIdentifier: pid_t,
@@ -34,7 +37,10 @@ struct CapturedTarget: Equatable, Sendable {
         recordingStartedAt: Date,
         windowFrame: CGRect? = nil,
         focusedElementFrame: CGRect? = nil,
-        focusedCaretFrame: CGRect? = nil
+        focusedCaretFrame: CGRect? = nil,
+        focusSnapshotIdentifier: UUID? = nil,
+        capturedWindowReference: Bool = false,
+        capturedEditableElementReference: Bool = false
     ) {
         self.processIdentifier = processIdentifier
         self.bundleIdentifier = bundleIdentifier
@@ -43,6 +49,9 @@ struct CapturedTarget: Equatable, Sendable {
         self.windowFrame = windowFrame
         self.focusedElementFrame = focusedElementFrame
         self.focusedCaretFrame = focusedCaretFrame
+        self.focusSnapshotIdentifier = focusSnapshotIdentifier
+        self.capturedWindowReference = capturedWindowReference
+        self.capturedEditableElementReference = capturedEditableElementReference
     }
 }
 

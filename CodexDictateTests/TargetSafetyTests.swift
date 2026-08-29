@@ -13,8 +13,28 @@ final class TargetSafetyTests: XCTestCase {
         XCTAssertEqual(disposition(currentPID: 42), .paste)
     }
 
-    func testChangedPIDCopies() {
-        XCTAssertEqual(disposition(currentPID: 43), .copy(.targetChanged))
+    func testChangedPIDInSameApplicationCanPaste() {
+        XCTAssertEqual(disposition(currentPID: 43), .paste)
+    }
+
+    func testChangedApplicationCopies() {
+        let current = CapturedTarget(
+            processIdentifier: 43,
+            bundleIdentifier: "com.apple.Safari",
+            applicationName: "Safari",
+            recordingStartedAt: Date()
+        )
+        XCTAssertEqual(
+            TargetSafety.disposition(
+                original: original,
+                current: current,
+                finalText: "Implement the parser.",
+                automaticPaste: true,
+                vscodeOnly: true,
+                accessibilityGranted: true
+            ),
+            .copy(.targetChanged)
+        )
     }
 
     func testNonVSCodeTargetCopiesByDefault() {
@@ -32,6 +52,45 @@ final class TargetSafetyTests: XCTestCase {
 
     func testMissingAccessibilityCopies() {
         XCTAssertEqual(disposition(currentPID: 42, accessibility: false), .copy(.accessibilityRequired))
+    }
+
+    func testBothPasteWorkflowsCanRestoreAnExactTarget() {
+        XCTAssertTrue(
+            TargetRecoveryPolicy.shouldRestoreExactTarget(
+                disposition: .copy(.targetChanged)
+            )
+        )
+        XCTAssertTrue(
+            TargetRecoveryPolicy.shouldRestoreExactTarget(
+                disposition: .paste
+            )
+        )
+        XCTAssertFalse(
+            TargetRecoveryPolicy.shouldRestoreExactTarget(
+                disposition: .copy(.accessibilityRequired)
+            )
+        )
+    }
+
+    func testExactFocusRequiresCapturedEditorAsWellAsWindow() {
+        XCTAssertTrue(ExactFocusPolicy.accepts(
+            windowWasCaptured: true,
+            windowMatches: true,
+            editableElementWasCaptured: true,
+            editableElementMatches: true
+        ))
+        XCTAssertFalse(ExactFocusPolicy.accepts(
+            windowWasCaptured: true,
+            windowMatches: true,
+            editableElementWasCaptured: true,
+            editableElementMatches: false
+        ))
+        XCTAssertTrue(ExactFocusPolicy.accepts(
+            windowWasCaptured: true,
+            windowMatches: true,
+            editableElementWasCaptured: false,
+            editableElementMatches: false
+        ))
     }
 
     private func disposition(currentPID: pid_t, accessibility: Bool = true) -> PasteDisposition {

@@ -19,21 +19,27 @@
 		4105361486B3492337C41971 /* NetworkingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78E8BB25AE778F88E898876D /* NetworkingTests.swift */; };
 		54AAC52D5F3F3A2115225086 /* AppIcon.icns in Resources */ = {isa = PBXBuildFile; fileRef = 7DFCDB6D993EE7FE09C33672 /* AppIcon.icns */; };
 		63C5B81BFD7EEA616B557458 /* DictationStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A8FF3D404B9B62769C50AFF /* DictationStateMachine.swift */; };
+		6550443563161B487D573162 /* FidelityInstructions.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3FE75496FFE76B5F72E395 /* FidelityInstructions.swift */; };
 		69EB86614369636329B37D86 /* KeywordSanitizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD51696A6498C53DBFA5D10 /* KeywordSanitizer.swift */; };
 		6DEF91F5F566CF3A6D4A4F4D /* MultipartFormData.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6D3D1E2E941140C42C238D8 /* MultipartFormData.swift */; };
 		898B0CAB85D5008BD279345E /* PermissionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEC5EEABC62AA8671C7D3A1D /* PermissionService.swift */; };
 		92D74A0A00C0B47A270CADA3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B25A4BF998A427375F32E60 /* AppDelegate.swift */; };
+		9939B294D749E3224F18ABAB /* FidelityPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 097CA211C73E8B03D4B8CF38 /* FidelityPipeline.swift */; };
 		A2DC6C54A386F161A84357FA /* KeychainLogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CE34A48C5E2FF8BEB34982B /* KeychainLogicTests.swift */; };
 		A925FF44B6DE0A22101B78FC /* LaunchAtLoginService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 602790A73C84B765AC3CB5A6 /* LaunchAtLoginService.swift */; };
 		B2643129973F8B16A94C154A /* TargetSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9064E06C991755A524F68D1 /* TargetSafetyTests.swift */; };
+		B4C00025FCA6149FC5C41E5B /* Diagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B3C1C1E3381FB203CD732CC /* Diagnostics.swift */; };
 		B944DA250DF0B246FB1876D5 /* HotKeyEdgeTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 039D66EF4A39A910B55555AA /* HotKeyEdgeTracker.swift */; };
+		BE4D9313EC2DCA26091BC58D /* FidelityModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87B6B31E8120DA4666357D5E /* FidelityModels.swift */; };
 		BF7BA0BFFC1C386DCE115A56 /* HUDPlacementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D585D85405809F07883C0EF0 /* HUDPlacementTests.swift */; };
 		C2E4C054BA2A2735654B5263 /* PasteServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB9778D652F0AD7AD7A3222 /* PasteServiceTests.swift */; };
 		CEC85CDE17C960ACA0560671 /* TargetApplicationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9711F8C648AFDF0D5D457D3 /* TargetApplicationService.swift */; };
 		CFEC2356DDBCDA62B479AC3E /* OpenAIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCD678F1A3FFB7AD3943D33E /* OpenAIModels.swift */; };
 		D1548464B76427F66F041C3B /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CD19AC685D81D2934169863 /* KeychainService.swift */; };
 		DB4063F4A67EBBD4C5CB80E4 /* AudioRecorderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42BF8EA56F758EC3D45A40CE /* AudioRecorderService.swift */; };
+		DC172D556055E08B16C50620 /* FidelityPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 070050D5E0FDAEF7997C12B6 /* FidelityPipelineTests.swift */; };
 		EA47E339409A1A17D1B518AC /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02327CFCE070E8F259A5A16F /* SettingsView.swift */; };
+		F21789D8C5600DD55BF52E94 /* DiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 055401CA4AB862B23271228F /* DiagnosticsTests.swift */; };
 		F31EBF3553E7BF968FC8A33B /* StateAndPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8BCB1550DF3FCA22D679605 /* StateAndPolicyTests.swift */; };
 		F3C3F1246A6CCF9952732C4F /* HUDController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9698FE7BB50176D61725D235 /* HUDController.swift */; };
 		F616DA7A8347BC44E7FC75A4 /* PasteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9389BE48A94CB4B9740052AE /* PasteService.swift */; };
@@ -53,6 +59,9 @@
 /* Begin PBXFileReference section */
 		02327CFCE070E8F259A5A16F /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		039D66EF4A39A910B55555AA /* HotKeyEdgeTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyEdgeTracker.swift; sourceTree = "<group>"; };
+		055401CA4AB862B23271228F /* DiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsTests.swift; sourceTree = "<group>"; };
+		070050D5E0FDAEF7997C12B6 /* FidelityPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FidelityPipelineTests.swift; sourceTree = "<group>"; };
+		097CA211C73E8B03D4B8CF38 /* FidelityPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FidelityPipeline.swift; sourceTree = "<group>"; };
 		2FA08BD9D37704AD8B867790 /* CodexDictate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexDictate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		35A46052B457847DE00FC90F /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
 		3881841ACA5A7525AD9BCE08 /* CodexDictateTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CodexDictateTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -60,6 +69,7 @@
 		3CD19AC685D81D2934169863 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		42BF8EA56F758EC3D45A40CE /* AudioRecorderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorderService.swift; sourceTree = "<group>"; };
 		49FD8CF556782E76E43A52DD /* PasteboardSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteboardSnapshot.swift; sourceTree = "<group>"; };
+		4B3C1C1E3381FB203CD732CC /* Diagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Diagnostics.swift; sourceTree = "<group>"; };
 		4E8D7AF761CF4789CE1A400F /* CodexDictateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CodexDictateApp.swift; sourceTree = "<group>"; };
 		4F1865E3C8381D493EE788BD /* TranscriptionServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionServices.swift; sourceTree = "<group>"; };
 		54A4135CDF0F96D5DA2EEE1F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -69,6 +79,7 @@
 		7CE34A48C5E2FF8BEB34982B /* KeychainLogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainLogicTests.swift; sourceTree = "<group>"; };
 		7DD51696A6498C53DBFA5D10 /* KeywordSanitizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeywordSanitizer.swift; sourceTree = "<group>"; };
 		7DFCDB6D993EE7FE09C33672 /* AppIcon.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = AppIcon.icns; sourceTree = "<group>"; };
+		87B6B31E8120DA4666357D5E /* FidelityModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FidelityModels.swift; sourceTree = "<group>"; };
 		896B98B61BAC340AC90C2324 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		9389BE48A94CB4B9740052AE /* PasteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteService.swift; sourceTree = "<group>"; };
 		9698FE7BB50176D61725D235 /* HUDController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HUDController.swift; sourceTree = "<group>"; };
@@ -82,6 +93,7 @@
 		DAEBED399B27B3B1B6D252A8 /* ShortcutRecorderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutRecorderView.swift; sourceTree = "<group>"; };
 		EB185EC6C346880A7DC2A463 /* DictationController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationController.swift; sourceTree = "<group>"; };
 		EBB9778D652F0AD7AD7A3222 /* PasteServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteServiceTests.swift; sourceTree = "<group>"; };
+		EE3FE75496FFE76B5F72E395 /* FidelityInstructions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FidelityInstructions.swift; sourceTree = "<group>"; };
 		EEC5EEABC62AA8671C7D3A1D /* PermissionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionService.swift; sourceTree = "<group>"; };
 		F5AE92FD8ACCB1E7F28A40D7 /* AudioRecordingPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecordingPolicy.swift; sourceTree = "<group>"; };
 		F8BCB1550DF3FCA22D679605 /* StateAndPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateAndPolicyTests.swift; sourceTree = "<group>"; };
@@ -92,6 +104,7 @@
 		02BB6FFCB6ED26BB96075DB5 /* Core */ = {
 			isa = PBXGroup;
 			children = (
+				4B3C1C1E3381FB203CD732CC /* Diagnostics.swift */,
 				EB185EC6C346880A7DC2A463 /* DictationController.swift */,
 				7A8FF3D404B9B62769C50AFF /* DictationStateMachine.swift */,
 				039D66EF4A39A910B55555AA /* HotKeyEdgeTracker.swift */,
@@ -103,6 +116,8 @@
 		03F5BF5E520CDE6D29B366E6 /* CodexDictateTests */ = {
 			isa = PBXGroup;
 			children = (
+				055401CA4AB862B23271228F /* DiagnosticsTests.swift */,
+				070050D5E0FDAEF7997C12B6 /* FidelityPipelineTests.swift */,
 				D585D85405809F07883C0EF0 /* HUDPlacementTests.swift */,
 				7CE34A48C5E2FF8BEB34982B /* KeychainLogicTests.swift */,
 				78E8BB25AE778F88E898876D /* NetworkingTests.swift */,
@@ -143,6 +158,9 @@
 		2AFF0094BBE1D289F3283D98 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
+				EE3FE75496FFE76B5F72E395 /* FidelityInstructions.swift */,
+				87B6B31E8120DA4666357D5E /* FidelityModels.swift */,
+				097CA211C73E8B03D4B8CF38 /* FidelityPipeline.swift */,
 				7DD51696A6498C53DBFA5D10 /* KeywordSanitizer.swift */,
 				B6D3D1E2E941140C42C238D8 /* MultipartFormData.swift */,
 				A8D6601F76EEBD66A21C2D9C /* OpenAIClient.swift */,
@@ -338,8 +356,12 @@
 				DB4063F4A67EBBD4C5CB80E4 /* AudioRecorderService.swift in Sources */,
 				12D1308F6E96E75C9166E73F /* AudioRecordingPolicy.swift in Sources */,
 				FE445565DA5250AEC8F59D1E /* CodexDictateApp.swift in Sources */,
+				B4C00025FCA6149FC5C41E5B /* Diagnostics.swift in Sources */,
 				29DFE38A1DC466390DF49A6E /* DictationController.swift in Sources */,
 				63C5B81BFD7EEA616B557458 /* DictationStateMachine.swift in Sources */,
+				6550443563161B487D573162 /* FidelityInstructions.swift in Sources */,
+				BE4D9313EC2DCA26091BC58D /* FidelityModels.swift in Sources */,
+				9939B294D749E3224F18ABAB /* FidelityPipeline.swift in Sources */,
 				3D9EF8EEF1E0D71169CF7C33 /* GlobalHotKeyService.swift in Sources */,
 				F3C3F1246A6CCF9952732C4F /* HUDController.swift in Sources */,
 				B944DA250DF0B246FB1876D5 /* HotKeyEdgeTracker.swift in Sources */,
@@ -365,6 +387,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F21789D8C5600DD55BF52E94 /* DiagnosticsTests.swift in Sources */,
+				DC172D556055E08B16C50620 /* FidelityPipelineTests.swift in Sources */,
 				BF7BA0BFFC1C386DCE115A56 /* HUDPlacementTests.swift in Sources */,
 				A2DC6C54A386F161A84357FA /* KeychainLogicTests.swift in Sources */,
 				4105361486B3492337C41971 /* NetworkingTests.swift in Sources */,
